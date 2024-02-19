@@ -1,0 +1,1166 @@
+---
+title: "Data Mining Assessment 1"
+author: "Godspower Ogaga Agofure"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+Student ID: '30105641'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Load required libraries
+```{r install &Load , message = FALSE}
+libraries <- c("tm", "tidytext", "ggplot2", "wordcloud", "syuzhet", "dplyr", "tibble", "textstem", "textdata", "tidyr", "Matrix", "topicmodels", "stringr", "reshape2", "LDAvis", "jsonlite", "kableExtra", "DT","tidyverse","spacyr","quanteda", "igraph" ,"ggraph","plotly") # nolint: line_length_linter.
+
+#install.packages(libraries) # Comment out after first execution # nolint: commented_code_linter.
+
+for (lib in libraries) { 
+  library(lib, character.only = TRUE) #Library takes function names without quotes, character only must be used in a loop of this kind. # nolint: line_length_linter.
+}
+```
+
+
+## Load the dataset
+```{r}
+# Load the data and perform data cleaning
+file_path <- "Data/Amazon_Book_Reviews.csv"
+df <- read.csv(file_path, stringsAsFactors = FALSE, na.strings = c("", "NA"))
+
+# Inspect summary and first few rows of data
+print(summary(df))
+print(head(df))
+print(colSums(is.na(df)))
+
+```
+
+# Task A – Text Mining 
+
+### Data Selection and Sampling
+```{r Select Data task a}
+set.seed(112232)
+
+selected_columns <- c("Title","Book_Price","Reviewer_id","Found_helpful_ratio", "Rating","Time", "Review_title","Review_text","Publisher", "First_author", "Genre")
+
+df <- df[, selected_columns] #Save the selected columns into df
+
+df <- na.omit(df) # Removes all rows containing null values
+
+df$Review_no <- 1:nrow(df) # Adds identifier column to reviews
+
+```
+
+```{r count Genre task a}
+genre_counts <- count(df,Genre, sort=TRUE) # Count number of reviews by Genre and sort
+head(genre_counts, n = 10) # Print top 5 most reviewed Genre
+summary(genre_counts) # Print summary statistics to see min. max. and average no. of reviews
+```
+
+```{r sample task a}
+set.seed(1112) # Set random seed for repeatability
+
+# Sample, for example, 1000 rows
+sampled_index <- sample(nrow(df),1000)
+sampled_df <- df[sampled_index,]
+
+print(summary(sampled_df))
+head(sampled_df)
+
+```
+**Now that our data is sampled, we can begin to perform some analysis on the reviews. We will begin by tokenizing our data**
+
+```{r tokenize task a}
+word_tokenized_data <- sampled_df %>%
+  unnest_tokens(output = word, input = "Review_text", token = "words", to_lower = TRUE) # Tokenize review_text column by word
+
+bigram_tokenized_data <- df %>%
+  unnest_tokens(output = bigram, input = "Review_text", token = "ngrams", n=2, to_lower = TRUE) # Tokenize review column to bigrams
+```
+
+**We can perform some initial exploratory analysis to see the most common words and bigrams in our reviews.**
+
+### Plot of top 10 words
+```{r initial word plot}
+word_counts <- word_tokenized_data %>%
+  count(word, sort = TRUE) # Counts the occurences of each word and sorts.
+
+ggplot(word_counts[1:10, ], aes(x = reorder(word, n), y = n)) + # Plots first 10 rows of word counts, with word (ordered by n) on the x axis and n on the y axis
+  geom_col(fill = "green3") + # Sets colours of bars to blue
+  labs(x = "Words", y = "Frequency") + # Defines x and y labels
+  coord_flip() # Flips coordinates so words go on the y axis (for readability)
+
+```
+```{r}
+
+```
+
+
+### Initial Word Cloud
+```{r Word Cloud task a }
+set.seed(1)
+wordcloud(words = word_counts$word, freq = word_counts$n, min.freq = 100, random.order=FALSE, random.color=FALSE, colors = sample(colors(), size = 10))
+# words = vector of words, freq = vector of frequencies, min.freq = minimum frequency to plot, random.order=FALSE means words are plotted in order of n, random.color=FALSE colors according to frequency and colors key word specifies colors to use.
+```
+```{r}
+
+```
+
+
+### Plot of top 10 bigrams
+```{r initial bigram plot task a}
+# Count the frequency of each bigram in the tokenized data
+bigram_counts <- bigram_tokenized_data %>%
+  count(bigram, sort = TRUE)
+
+# Create a bar plot of the top 10 most frequent bigrams
+ggplot(bigram_counts[1:10, ], aes(x = reorder(bigram, n), y = n)) +
+  geom_col(fill = "blue4") +
+  labs(x = "Bigrams", y = "Frequency") +
+  coord_flip()
+
+```
+```{r}
+
+```
+
+
+### Cleaning Data
+
+Initial analysis revealed that a lot of filler or "stop" words are present and dominating the visualizations. To address this issue, we will perform cleaning that includes the following steps:
+
+- Removes stop words
+- Removes special characters and numbers 
+- Lemmatizes words
+- Removes empty tokens
+
+
+```{r clean data task a}
+clean_tokens <- word_tokenized_data %>%
+  anti_join(stop_words, by = "word") # Removes stop words
+  
+clean_tokens$word <- gsub("[^a-zA-Z ]", "", clean_tokens$word) %>% # Remove special characters and numbers
+  na_if("") %>% # Replaces empty strings with NA
+  lemmatize_words() # Lemmatizes text
+
+clean_tokens <- na.omit(clean_tokens) # Removes null values
+
+#Untokenized and then retokenized to get cleaned bigrams
+untokenized_data <- clean_tokens %>%
+  group_by(Review_no) %>%
+  summarize(clean_review = paste(word, collapse = " ")) %>% # for each review number, takes every word and joins them with spaces
+  inner_join(df, by="Review_no") # Joins cleaned reviews to original df
+
+clean_bigrams <- untokenized_data %>%
+  unnest_tokens(output = bigram, input = "clean_review", token = "ngrams", n=2, to_lower = TRUE) # Tokenize word column to bigrams
+```
+
+### Top 10 Words and Bigrams After Cleaning
+```{r clean word plot task a}
+# Count the frequency of each word in the cleaned tokens
+word_counts <- clean_tokens %>%
+  count(word, sort = TRUE)
+
+# Select the top 10 words based on frequency
+top_words <- top_n(word_counts, 10, n)$word
+
+# Filter the word counts to include only the top N words
+filtered_word_counts <- filter(word_counts, word %in% top_words)
+
+# Reorder the filtered word counts based on frequency
+filtered_word_counts$word <- factor(filtered_word_counts$word, levels = top_words[length(top_words):1])
+
+# Create a bar plot of the top N words and their frequencies
+ggplot(filtered_word_counts, aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "green3") +  # Set bar fill color
+  labs(x = "Words", y = "Frequency") +  # Set axis labels
+  coord_flip()  # Flip the coordinates for horizontal orientation
+
+```
+```{r}
+
+```
+
+### Word Cloud After Cleaning
+```{r Word Cloud for task a}
+set.seed(1)
+wordcloud(words = word_counts$word, freq = word_counts$n, min.freq = 50, random.order=FALSE, random.color=FALSE, colors = sample(colors(), size = 20))
+```
+
+**Observation**
+
+> Book is the most common word in the reiew text
+
+### Top 10 Genre by Rating 
+```{r best Genre rated by 5 stars}
+# Sample, remove duplicates, and handle null values
+set.seed(1112) # Set random seed for repeatability
+
+# Sample, for example, 500 rows
+sampled_index <- sample(nrow(df), 1000)
+sampled_df <- df[sampled_index, ]
+
+# Remove duplicates based on Book_Title
+sampled_df <- sampled_df[!duplicated(sampled_df$Title), ]
+
+# Remove rows with null values
+sampled_df <- na.omit(sampled_df)
+
+# Filter the dataset for 5-star ratings
+five_star_books <- sampled_df[sampled_df$Rating == 5, ]
+
+# Group by genre and count the number of books in each genre
+genre_counts <- five_star_books %>%
+  group_by(Genre) %>%
+  summarize(Count = n())
+
+# Order genres by count and select the top N genres
+top_genres <- genre_counts %>%
+  arrange(desc(Count)) %>%
+  head(10)  # Change 10 to the desired number of top genres
+
+# Visualize the top genres with a vertical bar chart
+ggplot(top_genres, aes(x = reorder(Genre, Count), y = Count)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  labs(x = "Genre", y = "Numbers of 5-stars ") +
+  coord_flip()  # Flip coordinates for vertical bars
+```
+
+
+**Observation**
+
+> Fiction has the higest numbers of 5-star rating.
+
+
+### Top 10 Books with the Oldest Reviews(in Seconds)
+```{r }
+set.seed(1112)
+
+# Find the indices of the top 10 books with the maximum values in the "Time" column
+top_time_indices <- head(order(-sampled_df$Time), 10)
+
+# Create a dataframe with information about the top 10 books (excluding null values)
+top_books_df <- data.frame(
+  Review_Title = sampled_df$Review_title[top_time_indices],
+  Author = sampled_df$First_author[top_time_indices],
+  Reviewer = sampled_df$Reviewer_id[top_time_indices],
+  Genre = sampled_df$Genre[top_time_indices],
+  Time_in_seconds = sampled_df$Time[top_time_indices]
+)
+
+# Exclude rows with null values
+top_books_df <- top_books_df[complete.cases(top_books_df), ]
+
+# Render an interactive DataTable
+datatable(top_books_df, options = list(pageLength = 10))
+```
+
+
+```{r}
+
+# Set seed for reproducibility
+set.seed(1112)
+
+# Aggregate data by genre and calculate the total helpful ratio for each genre
+genre_total_helpful_ratio <- aggregate(Found_helpful_ratio ~ Genre, data = sampled_df, FUN = sum)
+
+# Sort the genres based on the total helpful ratio in descending order
+sorted_genres <- genre_total_helpful_ratio[order(-genre_total_helpful_ratio$Found_helpful_ratio), ]
+
+# Select the top 10 genres with the highest total helpful ratio
+top_10_genres <- head(sorted_genres, 10)
+
+# Create a bar plot
+plot <- ggplot(top_10_genres, aes(x = reorder(Genre, Found_helpful_ratio), y = Found_helpful_ratio)) +
+  geom_bar(stat = "identity", fill = "yellow3") +
+  labs(title = "Top 10 Genres with Highest Total Helpful Ratio",
+       x = "Genre",
+       y = "Total Helpful Ratio") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Display the plot
+plot
+
+```
+
+
+
+**Observation**
+
+> The genre "Fiction" has the highest total found helpful review score. The chart also gives an insight into the top genre with most helpful review ratios. 
+
+
+### The Average Book Price for Each Genre
+```{r echo=FALSE}
+set.seed(1112)
+
+# Calculate the average book price for each genre
+average_prices <- tapply(sampled_df$Book_Price, sampled_df$Genre, mean, na.rm = TRUE)
+
+# Find the top 10 most expensive genres based on average book price
+top_expensive_genres <- names(sort(average_prices, decreasing = TRUE))[1:10]
+
+# Filter the data for the top 10 most expensive genres
+filtered_sampled_df <- sampled_df[sampled_df$Genre %in% top_expensive_genres, ]
+
+# Create a ggplot bar chart
+ggplot(filtered_sampled_df, aes(x = reorder(Genre, -Book_Price), y = Book_Price, fill = Genre)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Genre", y = "Average Book Price", title = "Top 10 Most Expensive Genres (Average)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+**Observation**
+
+> Computers has the hight average price, followed by Science 
+
+# Task B – Sentiment Analysis 
+
+### Data Selection and Sampling
+```{r Select Data for task b }
+
+df <- read.csv(file_path, stringsAsFactors = FALSE, na.strings = c("", "NA"))
+
+selected_columns <- c("Title", "Rating","Time","Reviewer_id","Review_text","Publisher", "First_author", "Genre" )
+
+df <- df[, selected_columns] 
+
+df <- na.omit(df) # Removes all rows containing null values
+
+df$Review_no <- 1:nrow(df)
+```
+
+```{r count the genres }
+genre_counts <- count(df,Genre, sort=TRUE) # Count number of reviews by genre and sort
+head(genre_counts) # Print top 5 most reviewed genre
+summary(genre_counts)
+```
+
+
+```{r taking sample for task b}
+set.seed(1) # Set random seed for repeatability
+
+# Take sample of 5 Genre
+sample_index<- sample(length(unique(df$Genre)), 5) #Sample (Size of population, Size of sample), returns index for sample
+sampled_genre <- unique(df$Genre)[sample_index] # Take Genre at index defined previously
+
+df <- df %>%
+  filter(Genre %in% sampled_genre) # Select only rows where genre is one of sampled_genres
+
+print(summary(df))
+head(df)
+```
+
+### Tokenize the Reviews
+Now that our data is sampled, we can begin to perform some analysis on the reviews. We will begin by tokenizing our data.
+```{r tokenize review task b}
+word_tokenized_data <- df %>%
+  unnest_tokens(output = word, input = "Review_text", token = "words", to_lower = TRUE) # Tokenize review column by word
+
+bigram_tokenized_data <- df %>%
+  unnest_tokens(output = bigram, input = "Review_text", token = "ngrams", n=2, to_lower = TRUE) # Tokenize review column to bigrams
+```
+
+### Initial Exploratory Analysis
+We can perform some initial exploratory analysis to see the most common words and bigrams in our reviews.
+
+### Plot of top 10 words
+```{r initial word plot task b}
+word_counts <- word_tokenized_data %>%
+  count(word, sort = TRUE) # Counts the occurences of each word and sorts.
+
+ggplot(word_counts[1:10, ], aes(x = reorder(word, n), y = n)) + # Plots first 10 rows of word counts, with word (ordered by n) on the x axis and n on the y axis
+  geom_col(fill = "tan") + # Sets colours of bars to blue
+  labs(x = "Words", y = "Frequency") + # Defines x and y labels
+  coord_flip() # Flips coordinates so words go on the y axis (for readability)
+```
+```{r}
+
+```
+
+### Word Cloud
+```{r Word Cloud for task b}
+set.seed(123)
+wordcloud(words = word_counts$word, freq = word_counts$n, min.freq = 200, random.order=FALSE, random.color=FALSE, colors = sample(colors(), size = 100 ))
+# words = vector of words, freq = vector of frequencies, min.freq = minimum frequency to plot, random.order=FALSE means words are plotted in order of n, random.color=FALSE colors according to frequency and colors key word specifies colors to use.
+```
+
+```{r}
+
+```
+
+### Plot of top 10 bigrams
+```{r initial bigram plot task b}
+bigram_counts <- bigram_tokenized_data %>%
+  count(bigram, sort = TRUE)
+
+ggplot(bigram_counts[1:10, ], aes(x = reorder(bigram, n), y = n)) +
+  geom_col(fill = "#9966CC") +
+  labs(x = "Bigrams", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+
+### Cleaning Data: Getting rid of stop words
+Initial analysis revealed that a lot of filler or "stop" words are present and dominating the visualisations we will perform cleaning that does the following:
+- Removes stop words
+- Removes special characters and numbers 
+- lemmatizes words
+- Removes empty tokens
+
+```{r clean data task b}
+clean_tokens <- word_tokenized_data %>%
+  anti_join(stop_words, by = "word") # Removes stop words
+  
+clean_tokens$word <- gsub("[^a-zA-Z ]", "", clean_tokens$word) %>% # Remove special characters and numbers
+  na_if("") %>% # Replaces empty strings with NA
+  lemmatize_words() # Lemmatizes text
+
+clean_tokens <- na.omit(clean_tokens) # Removes null values
+
+# Untokenized and then retokenized to get cleaned bigrams
+untokenized_data <- clean_tokens %>%
+  group_by(Review_no) %>%
+  summarize(clean_review = paste(word, collapse = " ")) %>% # for each review number, takes every word and joins them with spaces
+  inner_join(df[,c(1,4,5,6,7,8,9)], by="Review_no") # Joins cleaned reviews to original df
+
+clean_bigrams <- untokenized_data %>%
+  unnest_tokens(output = bigram, input = "clean_review", token = "ngrams", n=2, to_lower = TRUE) # Tokenize word column to bigrams
+```
+
+
+### Top 10 Words and Bigrams After Cleaning
+```{r clean word plot task b}
+# Count the frequency of each word in the cleaned tokens
+word_counts <- clean_tokens %>%
+  count(word, sort = TRUE)
+
+# Select the top 10 words based on frequency
+top_words <- top_n(word_counts, 10, n)$word
+
+# Filter word counts to include only the top words
+filtered_word_counts <- filter(word_counts, word %in% top_words)
+
+# Ensure the order of words in the plot matches their frequency
+filtered_word_counts$word <- factor(filtered_word_counts$word, levels = top_words[length(top_words):1])
+
+# Create a bar plot of the top words and their frequencies
+ggplot(filtered_word_counts, aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "blue") +  # Set bar fill color
+  labs(x = "Words", y = "Frequency") +  # Set axis labels
+  coord_flip()   # Flip coordinates for horizontal bar plot
+```
+
+
+
+```{r clean bigram plot task b}
+# Calculate the counts of bigrams
+bigram_counts <- clean_bigrams %>%
+  count(bigram, sort = TRUE)
+
+# Select the top N bigrams based on frequency
+top_bigrams <- top_n(bigram_counts, 10, n)$bigram
+
+# Filter the bigram counts to include only the top bigrams
+filtered_bigram_counts <- filter(bigram_counts, bigram %in% top_bigrams)
+
+# Reorder the bigrams based on frequency and convert to factor
+filtered_bigram_counts$bigram <- factor(filtered_bigram_counts$bigram, levels = top_bigrams[length(top_bigrams):1])
+
+# Create a bar plot of the top bigrams
+ggplot(filtered_bigram_counts, aes(x = reorder(bigram, n), y = n)) +
+  geom_col(fill = "lightblue4") +
+  labs(x = "Bigrams", y = "Frequency") +
+  coord_flip()
+```
+
+
+### Top 10 Words & Bigrams grouped by genre 
+```{r grouped word_plot task b}
+
+# Grouped Words
+top_words <- top_n(word_counts,10,n)$word # Gets a vector of top 10 words
+
+# Groups clean_tokens by Genre and counts the number of occurrences of each word, and filters to only the top 10 words.
+grouped_count <- group_by(clean_tokens, Genre) %>% 
+  count(word) %>%
+  filter(word %in% top_words)
+
+grouped_count$word <- factor(grouped_count$word, levels = top_words[length(top_words):1]) # Orders the top words according to overall frequency
+
+ggplot(data = grouped_count, aes(x = word, y = n, fill = Genre)) + # Fill keyword allows groupings
+  geom_col(position = "dodge") + # position = dodge creates grouped bar chart
+  labs(x = "Words", y = "Fill", fill = "Genre") +
+  coord_flip()
+```
+
+### Grouped Bigrams
+```{r grouped bigram plot task b}
+# Extracting the top 10 bigrams
+top_bigrams <- top_n(bigram_counts, 10, n)$bigram
+
+# Grouping the cleaned bigrams by genre and counting occurrences
+grouped_count <- group_by(clean_bigrams, Genre) %>%
+  count(bigram) %>%
+  filter(bigram %in% top_bigrams)
+
+# Reordering bigrams for plotting
+grouped_count$bigram <- factor(grouped_count$bigram, levels = top_bigrams[length(top_bigrams):1])
+
+# Creating a grouped bar plot
+ggplot(data = grouped_count, aes(x = bigram, y = n, fill = Genre)) +
+  geom_col(position = "dodge") +
+  labs(x = "Bigrams", y = "Frequency", fill = "Genre") +
+  coord_flip()
+```
+
+### Creating Clean Word Cloud  
+```{r Clean Word Cloud task b}
+set.seed(1)
+wordcloud(words = word_counts$word, freq = word_counts$n, min.freq = 200, random.order=FALSE, random.color=FALSE, colors = sample(colors(), size = 100))
+```
+```{r}
+
+```
+
+
+## Sentiment Analysis
+### Bing Lexicons 
+```{r bing lexicon task b}
+# Loads the bing sentiment lexicon
+bing_sentiments <- get_sentiments("bing") 
+
+# Display summary statistics of the bing sentiment lexicon
+summary(bing_sentiments)
+
+# Print the unique sentiments available in the bing lexicon
+print(unique(bing_sentiments$sentiment))
+
+# Set seed for reproducibility
+set.seed(2)
+
+# Returns a sample of 5 random rows from the bing sentiment lexicon
+sampled_bing_sentiments <- bing_sentiments[sample(nrow(bing_sentiments), 5),]
+```
+
+
+### AFINN Lexicon
+```{r AFINN lexicon 1 task b}
+# Load the AFINN sentiment lexicon
+afinn_sentiments <- get_sentiments("afinn")
+
+# Display summary statistics of the AFINN sentiment lexicon
+summary(afinn_sentiments)
+
+# Print the unique sentiment values available in the AFINN lexicon
+print(sort(unique(afinn_sentiments$value)))
+
+# Set seed for reproducibility
+set.seed(1)
+
+# Sample 5 random rows from the AFINN sentiment lexicon
+sampled_afinn_sentiments <- afinn_sentiments[sample(nrow(afinn_sentiments), 5),]
+
+```
+
+
+### NRC Lexicons 
+```{r NRC lexicon 1 task b}
+# Load the NRC sentiment lexicon
+nrc_sentiments <- get_sentiments("nrc")
+
+# Display summary statistics of the NRC sentiment lexicon
+summary(nrc_sentiments)
+
+# Display the first few rows of the NRC sentiment lexicon
+head(nrc_sentiments)
+
+# Print the unique sentiments available in the NRC lexicon
+print(unique(nrc_sentiments$sentiment))
+
+# Set seed for reproducibility
+set.seed(1)
+
+# Sample 5 random rows from the NRC sentiment lexicon
+sampled_nrc_sentiments <- nrc_sentiments[sample(nrow(nrc_sentiments), 5),]
+```
+
+
+### Applying bing lexicon
+```{r applying bing task b}
+# Create dataset containing only words with associated sentiment & adds sentiment column.
+sentiment_data <- clean_tokens %>%
+  inner_join(get_sentiments("bing"), by = "word") # Joins lexicon to data set using only words that are in both.
+
+# Calculate Sentiment scores for each review
+sentiment_score <- sentiment_data %>%
+  group_by(Review_no) %>%
+  summarize(bing_sentiment = sum(sentiment == "positive") - sum(sentiment == "negative")) # Calculates sentiment score as sum of number of positive and negative sentiments
+
+# Merge with df
+df_with_sentiment = df %>%
+  inner_join(sentiment_score, by = "Review_no")
+```
+
+
+### Worse Reviews using the bing lexicon
+```{r inspect afinn worst_reviews}
+# Extract the review with the lowest sentiment score
+worst_reviews = df_with_sentiment[order(df_with_sentiment$bing_sentiment)[1],"Review_text"]
+
+# Loop through each review and print it
+for (review in worst_reviews){
+  print(review)
+}
+```
+
+
+### Best Reviews using the bing lexicon
+```{r inspect afinn best_reviews}
+# Select the review with the highest sentiment score based on Bing lexicon
+best_reviews = df_with_sentiment[order(df_with_sentiment$bing_sentiment, decreasing = TRUE)[1],"Review_text"]
+
+# Iterate over each selected review and print it
+for (review in best_reviews){
+  print(review)
+}
+
+```
+
+
+### Visualisations of bing lexicon
+```{r bing visualisations task b}
+# Histogram of sentiment scores
+ggplot(df_with_sentiment, aes(x = bing_sentiment)) +
+  geom_histogram(binwidth = 1)
+
+# Average Sentiment by Genre
+genre_sentiment <- df_with_sentiment %>%
+  group_by(Genre) %>%
+  summarize(Average_Bing_Sentiment = mean(bing_sentiment, na.rm = TRUE))  # Added na.rm = TRUE to handle potential NA values
+
+# Create a color palette for genres
+color_palette <- scales::brewer_pal(palette = "Set3")(length(unique(genre_sentiment$Genre)))
+
+ggplot(genre_sentiment, aes(x = reorder(Genre, Average_Bing_Sentiment), y = Average_Bing_Sentiment, fill = Genre)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = color_palette) +  # Set custom colors
+  coord_flip() +
+  labs(title = "Average Sentiment Score by Genre", x = "Genre", y = "Average Sentiment Score")
+
+# Box Plot of Sentiment against rating
+ggplot(df_with_sentiment, aes(x = as.factor(Rating), y = bing_sentiment)) +  # Converted Rating to factor for better representation
+  geom_boxplot() +
+  labs(title = "Box Plot of Bing Sentiment Score vs. Rating",
+       x = "Rating",
+       y = "Sentiment Score")
+
+```
+
+
+# Applying AFINN lexicon
+```{r applying afinn 2 task b}
+# Create dataset containing only words with associated sentiment & adds sentiment column.
+sentiment_data <- clean_tokens %>%
+  inner_join(get_sentiments("afinn"), by = "word")
+
+# Calculate Sentiment scores for each review
+sentiment_score <- sentiment_data %>%
+  group_by(Review_no) %>%
+  summarize(afinn_sentiment = sum(value))
+
+# Merge with df
+df_with_sentiment = df_with_sentiment %>%
+  inner_join(sentiment_score, by = "Review_no")
+```
+
+
+### Worse Reviews from the AFINN lexicon
+```{r inspect afinn 2 for worse reviews}
+worst_reviews = df_with_sentiment[order(df_with_sentiment$afinn_sentiment)[1],"Review_text"]
+
+
+for (review in worst_reviews){
+  print(review)
+}
+```
+
+### Best Reviews from the AFINN lexicon
+```{r inspect afinn 2 for best reviews}
+### Best Review
+best_reviews = df_with_sentiment[order(df_with_sentiment$afinn_sentiment, decreasing = TRUE)[1],"Review_text"]
+
+for (review in best_reviews){
+  print(review)
+}
+
+```
+
+
+
+### Visualisations of afinn lexicon
+```{r afinn visualisations}
+# Histogram of sentiment scores
+ggplot(df_with_sentiment, aes(x = afinn_sentiment)) +
+  geom_histogram(binwidth = 1)
+
+# Average Sentiment by Genre
+genre_sentiment <- df_with_sentiment %>%
+  group_by(Genre) %>%
+  summarize(Average_Afinn_Sentiment = mean(afinn_sentiment, na.rm = TRUE))  # Added na.rm = TRUE to handle potential NA values
+
+ggplot(genre_sentiment, aes(x = reorder(Genre, Average_Afinn_Sentiment), y = Average_Afinn_Sentiment, fill = Genre)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Average Sentiment Score by Genre", x = "Genre", y = "Average Sentiment Score")
+
+# Box Plot of Sentiment against rating
+ggplot(df_with_sentiment, aes(x = as.factor(Rating), y = afinn_sentiment)) +  # Converted Rating to factor for better representation
+  geom_boxplot() +
+  labs(title = "Box Plot of AFINN Sentiment Score vs. Rating",
+       x = "Rating",
+       y = "Sentiment Score")
+
+# Scatter Plot of Bing vs. AFINN Sentiment
+ggplot(df_with_sentiment, aes(x = bing_sentiment, y = afinn_sentiment)) +
+  geom_point() +
+  labs(title = "Scatter Plot of Bing vs. AFINN Sentiment Scores",
+       x = "Bing Sentiment Score",
+       y = "AFINN Sentiment Score")
+
+```
+
+
+
+
+### Applying NRC lexicon
+```{r applying NRC 2 task b}
+# Create dataset containing only words with associated sentiment & adds sentiment column.
+emotion_data <- clean_tokens %>%
+  inner_join(get_sentiments("nrc"), by = c("word" = "word"), suffix = c("", "_sentiment"))
+
+# Calculate Sentiment scores for each review
+emotion_count <- emotion_data %>%
+  group_by(Review_no) %>%
+  count(sentiment)
+
+# Pivots data so that there is a column associated with each emotion
+wide_emotion_data <- emotion_count %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = list(n = 0))
+
+# Merge with df
+df_with_sentiment = df_with_sentiment %>%
+  inner_join(wide_emotion_data, by = "Review_no")
+```
+
+
+### Visualisations of NRC lexicon
+```{r NRC Visualisations 2 task b}
+long_df <- df_with_sentiment %>%
+  pivot_longer(cols = c("joy", "positive", "trust", "anticipation", "surprise", "sadness", "negative", "anger", "disgust", "fear"),
+               names_to = "Emotion",
+               values_to = "Intensity")
+
+emotion_scores <- long_df %>%
+  group_by(Genre, Emotion) %>%
+  summarize(avg_intensity = mean(Intensity), .groups = 'drop')
+
+ggplot(emotion_scores, aes(x = Genre, y = Emotion, fill = avg_intensity)) +
+  geom_tile() +  # Creates the heatmap tiles
+  scale_fill_gradient2(low = "blue", high = "red") +  # Adjust colors
+  labs(x = "Genre", y = "Emotion", fill = "Intensity") +
+  theme(axis.text.x = element_text(angle = 30, hjust=1))  # Rotates text to 30 degrees and hjust=1 aligns text to the right
+```
+
+
+**Observation**
+
+> Religion has the strongest positive and trust sentiment followed by Drama. Gardening and Science-fiction seems to have the least sentiments accross all emotions
+
+
+# Task C – Topic Modelling 
+## Data Selection and Sampling for Topic Modeling
+```{r Select Data for task c}
+## Load the Data into data frame
+df <- read.csv(file_path, stringsAsFactors = FALSE, na.strings = c("", "NA"))
+
+# Select and filter data
+df <- df %>% 
+  select(Title, Review_text, Genre,Rating, First_author, Publisher) %>%
+  filter(str_count(Review_text) >= 20 & str_count(Review_text) <= 1000)
+
+# Remove rows containing null values
+df <- na.omit(df)
+
+if(nrow(df) > 6000) {
+  set.seed(1) # for reproducibility
+  df <- sample_n(df, 6000)
+}
+```
+
+
+### Convert Data to a Clean Term Document Matrix (TDM)
+```{r}
+# Convert text column to corpus
+corpus <- VCorpus(VectorSource(df$Review_text))
+
+# Apply cleaning
+corpus <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(content_transformer(function(x) gsub("[^a-zA-Z ]", "", x))) %>%
+  tm_map(removeWords, stopwords("en")) %>%
+  tm_map(stemDocument)
+
+# Convert to a term document matrix
+# Word length between 3 and 15 words
+tdm <- TermDocumentMatrix(corpus, control = list(wordLengths = c(3, 15)))
+
+tdm_matrix <- as.matrix(tdm)
+
+```
+
+
+
+### Further Selection of Words
+```{r Word Frequency Distribution}
+term_frequencies <- rowSums(tdm_matrix)
+
+# Create a data frame for plotting
+term_frequency_df <- data.frame(term = names(term_frequencies), frequency = term_frequencies)
+
+# Sort the data frame by frequency in descending order and select the top 10
+top_terms <- term_frequency_df %>%
+  arrange(desc(frequency)) %>%
+  head(10)
+
+# Display the top 10 terms
+print(top_terms)
+
+# Create the histogram
+ggplot(term_frequency_df, aes(x = frequency)) +
+  geom_histogram(binwidth = 100) +
+  labs(title = "Histogram of Term Frequencies",
+       x = "Term Frequency",
+       y = "Number of Terms") 
+
+```
+
+
+
+```{r Word Filtering}
+# Find terms that appear in more than 10% of documents
+frequent_terms <- findFreqTerms(tdm, lowfreq = 0.1 * ncol(tdm_matrix))
+# Find terms that appear in less than 1% of documents
+rare_terms <- findFreqTerms(tdm, highfreq = 0.01 * ncol(tdm_matrix))
+
+print("Frequent Terms")
+print(frequent_terms)
+print("First 20 Infrequent Terms")
+print(rare_terms[1:20])
+
+# Edit list of frequent words to keep useful ones
+to_keep <- c("famili", "love", "murder","recommend","charact","love")
+
+to_remove <- frequent_terms[!frequent_terms %in% to_keep]
+
+filtered_tdm_matrix <- tdm_matrix[!rownames(tdm_matrix) %in% to_remove, ]
+filtered_tdm_matrix <- filtered_tdm_matrix[!rownames(filtered_tdm_matrix) %in% rare_terms, ]
+
+# Calculate column sums
+column_sums <- colSums(filtered_tdm_matrix)
+
+# Identify columns that are all zeros
+zero_columns <- which(column_sums == 0)
+
+# Remove these columns
+if(length(zero_columns) > 0) {
+  # Remove these columns
+  filtered_tdm_matrix <- filtered_tdm_matrix[, -zero_columns]
+} else {
+  # If no columns are all zeros, just use the original matrix
+  print("No zero columns in TDM matrix")
+}
+```
+
+
+
+```{r Word Frequency Distribution 2}
+term_frequencies <- rowSums(filtered_tdm_matrix)
+
+# Create a data frame for plotting
+term_frequency_df <- data.frame(term = names(term_frequencies), frequency = term_frequencies)
+
+# Sort the data frame by frequency in descending order and select the top 10
+top_terms <- term_frequency_df %>%
+  arrange(desc(frequency)) %>%
+  head(10)
+
+# Display the top 10 terms
+print(top_terms)
+
+# Create the histogram
+ggplot(term_frequency_df, aes(x = frequency)) +
+  geom_histogram(binwidth = 1) +
+  labs(title = "Histogram of Term Frequencies",
+       x = "Term Frequency",
+       y = "Number of Terms") +
+  theme_minimal()
+```
+
+
+
+```{r further selection}
+to_remove <- c("seem","much","give", "author","time","book","one","read","good","will","put","alway")
+
+filtered_tdm_matrix <- filtered_tdm_matrix[!rownames(filtered_tdm_matrix) %in% to_remove, ]
+
+term_frequencies <- rowSums(filtered_tdm_matrix)
+
+# Create a data frame for plotting
+term_frequency_df <- data.frame(term = names(term_frequencies), frequency = term_frequencies)
+
+# Sort the data frame by frequency in descending order and select the top 10
+top_terms <- term_frequency_df %>%
+  arrange(desc(frequency)) %>%
+  head(10)
+
+# Display the top 10 terms
+print(top_terms)
+```
+
+
+### Apply LDA
+```{r Initial LDA model}
+dtm <- t(filtered_tdm_matrix)
+lda_model <- LDA(dtm, k = 5)
+```
+
+
+## Topic Modelling Visualisation
+```{r LDA Visualisation 1}
+# Extract the terms associated with each topic from the LDA model
+topics <- tidy(lda_model, matrix = "beta")
+
+# Display the top terms for each topic
+topics
+
+# Group terms by topic and select the top 10 terms based on beta values
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# Plot the top terms for each topic using ggplot
+top_terms %>%
+  ggplot(aes(x = reorder(term, beta), y = beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+```
+
+### Deciding K
+```{r Choosing k}
+range_k <- seq(2, 10, by = 1)  # Adjust the range as needed
+perplexities <- sapply(range_k, function(k) {
+  model <- LDA(dtm, k = k, control = list(seed = 1))
+  perplexity(model)
+})
+
+# Plotting perplexities
+plot(range_k, perplexities, type = "b", xlab = "Number of Topics", ylab = "Perplexity")
+```
+
+
+
+## Interactive Principal Componenet Space Visualisation
+```{r pca visualisation}
+# Set seed for reproducibility
+set.seed(1)
+
+# Create the LDA model with 5 topics
+lda_model <- LDA(dtm, k = 5)
+
+# Prepare data for visualization
+lda_vis_data <- createJSON(phi = posterior(lda_model)$terms,
+                            theta = posterior(lda_model)$topics,
+                            doc.length = rowSums(as.matrix(dtm)),
+                            vocab = colnames(as.matrix(dtm)),
+                            term.frequency = colSums(as.matrix(dtm)))
+
+# Visualize the LDA model using SerVis
+serVis(lda_vis_data)
+```
+
+
+
+## Topic Modelling Visualisation
+```{r LDA Visualisation 2}
+# Extract topic-term distributions from the LDA model
+topics <- tidy(lda_model, matrix = "beta")
+
+# Display the topic-term distributions
+topics
+
+# Select the top 10 terms for each topic based on beta values
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# Plot the top terms for each topic
+top_terms %>%
+  ggplot(aes(x =reorder(term, beta), y = beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+```
+
+
+
+# Task D – Further exploration 
+## Network Analysis
+According to Borgatti et al. (2018), Network analysis in R involves studying the structure, relationships, and properties of networks or graphs using various analytical and visual techniques . Key tasks include loading and manipulating networks, descriptive analysis, visualization, centrality measures, community detection, network modelling, and analysis of dynamic networks. 
+
+
+###Load and Prepare Data
+In this section, we load the data and prepare it for network analysis. We set the seed to ensure reproducibility. We remove any rows containing NA or NaN values to ensure data integrity.
+```{r clean and representative subset of data for network analysis.}
+## Load the Data into data frame
+df <- read.csv(file_path, stringsAsFactors = FALSE, na.strings = c(" ", "NA"))
+
+set.seed(123)
+
+# Create an empty adjacency matrix
+adj_matrix <- matrix(0, ncol = ncol(df), nrow = ncol(df))
+
+# Define the condition for establishing connections
+for (i in 1:(ncol(df) - 1)) {
+  for (j in (i + 1):ncol(df)) {
+    # Check if the two columns share common reviewers
+    if (length(intersect(df[, i], df[, j])) > 0) {
+      adj_matrix[i, j] <- 1
+      adj_matrix[j, i] <- 1  # Assuming undirected network
+    }
+  }
+}
+
+
+# Create a graph object
+g <- graph_from_adjacency_matrix(adj_matrix, weighted = TRUE, mode = "undirected")
+
+# Set node names
+V(g)$name <- colnames(df)
+
+
+```
+
+
+### Applying Network Analysis
+In this section, we perform basic network analysis on the prepared network. we calculate the degree centrality, which measures the number of connections each node has. Eigenvector centrality measures the influence of a node in the network based on the connections it has to other influential nodes.Betweenness centrality measures the extent to which a node lies on the shortest paths between other nodes in the network This metric provides insights into the importance of individual nodes within the network.
+
+According to ChatGPT (2024), this code retrieved and adapted to provides valuable insights into network structures.
+
+```{r}
+# Additional network metrics()
+betweenness <- betweenness(g)
+mean_betweenness <- mean(betweenness)
+cat("Mean Betweenness Centrality:", mean_betweenness, "\n")
+
+# Closeness centrality
+closeness <- closeness(g)
+mean_closeness <- mean(closeness)
+cat("Mean Closeness Centrality:", mean_closeness, "\n")
+
+# Eigenvector centrality
+eigen <- eigen_centrality(g)$vector
+mean_eigen <- mean(eigen)
+cat("Mean Eigenvector Centrality:", mean_eigen, "\n")
+
+
+```
+
+
+**Observation**
+
+1. **Mean Betweenness Centrality:** The value of `1.818182` suggests that, on average, the nodes in the network lie on approximately `1.82` shortest paths between other nodes. This means that, on average, each node serves as a bridge or intermediary for communication between other nodes approximately `1.82` times. Nodes with higher betweenness centrality are more critical for maintaining connectivity and facilitating communication between different parts of the network.
+
+2. **Mean Closeness Centrality:** The value of `NaN` indicates that the mean closeness centrality could not be calculated. This could be due to disconnected nodes in the network or nodes that cannot reach other nodes. In a network where the mean closeness centrality can be calculated, higher values would indicate that, on average, nodes are closer to all other nodes in the network, enabling efficient information flow and communication.
+
+3. **Mean Eigenvector Centrality:** The value of `0.4675542` suggests that, on average, the nodes in your network have a moderate to high influence relative to other nodes. This means that, on average, nodes are connected to other nodes with moderate to high influence or importance. Nodes with higher eigenvector centrality are more influential and have a greater impact on the overall network structure and dynamics.
+
+These explanations provide insights into the specific roles and importance of nodes in the network based on their betweenness, closeness, and eigenvector centrality values.
+
+### Visualize Network
+In this section, we visualize the network using a graph plot. We apply the Fruchterman-Reingold layout algorithm to arrange the nodes in a visually appealing manner. Additionally, we adjust the edge properties such as arrow size and curvature for better clarity.
+
+
+
+```{r}
+# Customized plot with node colouring based on centrality and node names
+plot(g, 
+     layout = layout_with_fr(g), 
+     vertex.label = V(g)$name,  # Display node names
+     vertex.color = heat.colors(15)[cut(degree(g), breaks = 15)], # Colour nodes based on degree centrality
+     vertex.size = 15,  # Set the size of the nodes
+     vertex.frame.color = "black",  # Color of the node border
+     vertex.shape = "circle",  # Shape of the nodes
+     vertex.label.font = 2,  # Bold font for node labels
+     vertex.label.cex = 0.8,  # Adjust label size
+     vertex.label.color = "blue",  # Color of the node labels
+     vertex.label.dist = 2,  # Distance of the labels from nodes
+     vertex.label.degree = 1,  # Orientation of the labels (0 for horizontal)
+     edge.arrow.size = 5, 
+     edge.curved = FALSE)
+
+
+```
+
+**Observation**
+
+> 1. **Nodes that are connected:**
+>   - These nodes represent entities with shared relationships or connections.
+>   - The edges between connected nodes illustrate these relationships.
+>
+> 2. **Nodes that are not connected:**
+>   - These nodes represent isolated entities without direct connections.
+>   - They may have unique attributes or belong to distinct categories.
+
+
+### Disscussion of Future Work
+
+In addition to sentiment analysis and topic modelling, there are several other advanced models and techniques that can be explored for text analysis and natural language processing (NLP). Some of these include:
+
+**Text Classification:** Text categorization is the process of grouping text materials into groupings or categories that have been predetermined (Sebastiani, 2002). Tasks like spam detection, document categorization, sentiment classification (beyond just positive/negative sentiment), and more can benefit from this. For better classification performance, sophisticated methods such as deep learning-based models (such as Convolutional and Recurrent neural networks) might be used (Kim, 2014).
+
+**Named Entity Linking (NEL):** Named Entity Linking is the task of linking named entities mentioned in text to their corresponding entries in a knowledge base or database (Ferragina & Scaiella, 2012). With the use of NEL, textual data may be enhanced with more context and semantics and entity distinction.
+
+**Text Summarization:** The goal of text summarising techniques is to provide logical and succinct summaries of larger text documents automatically. This can be accomplished through the use of abstractive techniques, which create new sentences that encapsulate the main ideas of the original text, or extractive techniques, which involve picking and rearranging significant sentences or phrases from the original text (Nenkova & McKeown, 2011).
+
+**Dependency Parsing:** By determining the connections between words, a method called dependency parsing may be used to examine the grammatical structure of sentences (Jurafsky & Martin, 2019). Dependency parsers are important for tasks like information extraction, machine translation, and question answering because they produce parse trees that capture the syntactic interdependence between words in a phrase.
+
+
+
+## References
+Ferragina, P., & Scaiella, U. (2012). Fast and accurate annotation of short texts with Wikipedia pages. *IEEE Software*, 29(1), 70–75. doi: [10.1109/ms.2011.122](https://doi.org/10.1109/ms.2011.122)
+
+Jurafsky, D., & Martin, J. H. (2020). Speech and Language Processing: An Introduction to Natural Language Processing, Computational Linguistics, and Speech Recognition (3rd ed.). Available at: [https://web.stanford.edu/~jurafsky/slp3/ed3book.pdf](https://web.stanford.edu/~jurafsky/slp3/ed3book.pdf)
+
+Kim, Y. (2014). Convolutional neural networks for sentence classification. *ArXiv (Cornell University)*, pp. 1746–1751. Available at: [https://aclanthology.org/D14-1181/](https://aclanthology.org/D14-1181/)
+
+Nenkova, A., & McKeown, K. (2011). Automatic summarization. *Foundations and Trends® in Information Retrieval*, 5(2-3), 103–233. doi: [10.1561/1500000015](https://doi.org/10.1561/1500000015)
+
+Sebastiani, F. (2002). Machine learning in automated text categorization. *ACM Computing Surveys*, 34(1), 1–47. Available at: [https://dl.acm.org/citation.cfm?id=505283](https://dl.acm.org/citation.cfm?id=505283)
+
+Borgatti, S. P., Everett, M. G., & Johnson, J. C. (2018). Analyzing social networks. Sage publications.
+
+ChatGPT. (2024). Network Analysis code. Retrieved from [https://chat.openai.com] (https://chat.openai.com) (Accessed: [Date accessed, e.g., 16 February 2024]).
+
