@@ -43,7 +43,8 @@ To get started with the project, follow these steps:
 ## Directory Structure
 
 - `data/`: Contains the raw CSV data files.
-- `/`: Includes the R Mark down scripts  the task.
+- `/`: Includes the R Mark down scripts the task.
+
 
 ## License
 
